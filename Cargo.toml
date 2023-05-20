@@ -8,4 +8,13 @@ edition = "2021"
 # [lib]
 # name="health_checker"
 # path="src/lib.rs"
+# [dependencies]
+# tokio = { version = "1", features = ["full"] }
+# mini-redis = "0.4"
 [dependencies]
+futures = "0.3"
+
+[dependencies.async-std]
+version = "1.6"
+features = ["attributes"]
+
