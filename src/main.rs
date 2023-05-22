@@ -1,178 +1,265 @@
-// use health_checker::ThreadPool;
-// use super::*;
-use async_std::task;
+//! Provides a RESTful web server managing some nodes.
+//!
+//! API will be:
+//!
+//! - `GET /nodes`: return a JSON list of nodes.
+//! - `POST /nodes`: create a new Node.
+//! - `PATCH /nodes/:id`: update a specific Node.
+//! - `DELETE /nodes/:id`: delete a specific Node.
+//!
+//! Run with
+//!
+//! ```not_rust
+//! cargo run -p example-nodes
+//! ```
+
+use axum::{
+    error_handling::HandleErrorLayer,
+    extract::{Path, Query, State},
+    http::StatusCode,
+    response::IntoResponse,
+    routing::{get, patch},
+    Json, Router,
+};
+use serde::{Deserialize, Serialize};
 use std::{
-    fs,
-    // io::{prelude::*, BufReader},
-    // net::{TcpListener, TcpStream},
-    // thread,
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{Arc, RwLock},
     time::Duration,
 };
-use async_std::prelude::*;
-use async_std::net::TcpListener;
-// use async_std::net::TcpStream;
-use futures::stream::StreamExt;
-use async_std::task::spawn;
-use async_std::io::{Read, Write};
-use futures::io::Error;
-use futures::task::{Context, Poll};
-use std::cmp::min;
-use std::pin::Pin;
-use std::marker::Unpin;
+use tower::{BoxError, ServiceBuilder};
+use tower_http::trace::TraceLayer;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use uuid::Uuid;
 
-#[async_std::main]
+#[tokio::main]
 async fn main() {
-    // 监听地址: 127.0.0.1:7878
-    let listener = TcpListener::bind("127.0.0.1:7878").await.unwrap();
-    // let pool = ThreadPool::new(4);
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "example_nodes=debug,tower_http=debug".into()),
+        )
+        .with(tracing_subscriber::fmt::layer())
+        .init();
 
-    // for stream in listener.incoming() {
-    //     let stream = stream.unwrap();
-    //     // thread::spawn(|| {
-    //     //     handle_connection(stream);
-    //     // });
-    //     // pool.execute(|| {
-    //     handle_connection(stream).await;
-    //     // });
-    //     // println!("Connection established!");
-    //     // handle_connection(stream);
-    // }
-    listener.incoming().for_each_concurrent(/*limit*/ None, |tcpstream| async move {
-        // let tcpstream=tcpstream.unwrap();
-        // handle_connection(tcpstream).await;
-        let tcpstream = tcpstream.unwrap();
-        spawn(handle_connection(tcpstream));
-    }).await;
-    println!("Shutting down");
+    let db = Db::default();
+
+    // Compose the routes
+    let app = Router::new()
+        .route("/nodes", get(nodes_index).post(nodes_create))
+        .route("/nodes/:id", patch(nodes_update).delete(nodes_delete))
+        // Add middleware to all routes
+        .layer(
+            ServiceBuilder::new()
+                .layer(HandleErrorLayer::new(|error: BoxError| async move {
+                    if error.is::<tower::timeout::error::Elapsed>() {
+                        Ok(StatusCode::REQUEST_TIMEOUT)
+                    } else {
+                        Err((
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("Unhandled internal error: {}", error),
+                        ))
+                    }
+                }))
+                .timeout(Duration::from_secs(10))
+                .layer(TraceLayer::new_for_http())
+                .into_inner(),
+        )
+        .with_state(db);
+
+    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    tracing::debug!("listening on {}", addr);
+    axum::Server::bind(&addr)
+        .serve(app.into_make_service())
+        .await
+        .unwrap();
 }
 
-// fn handle_connection(mut stream: TcpStream) {
-//     let buf_reader = BufReader::new(&stream);
-//     let request_line = buf_reader.lines().next().unwrap().unwrap();
-//     // let (status_line, filename) = if request_line == "GET / HTTP/1.1" {
-//     //     ("HTTP/1.1 200 OK", "hello.html")
-//     // } else {
-//     //     ("HTTP/1.1 404 NOT FOUND", "404.html")
-//     // };
-//     let (status_line, filename) = match &request_line[..] {
-//         "GET / HTTP/1.1" => ("HTTP/1.1 200 OK", "hello.html"),
-//         "GET /sleep HTTP/1.1" => {
-//             thread::sleep(Duration::from_secs(5));
-//             ("HTTP/1.1 200 OK", "hello.html")
-//         }
-//         _ => ("HTTP/1.1 404 NOT FOUND", "404.html"),
-//     };
-//     let contents = fs::read_to_string(filename).unwrap();
-//     let length = contents.len();
-//     let response = format!("{status_line}\r\nContent-Length: {length}\r\n\r\n{contents}");
-//     stream.write_all(response.as_bytes()).unwrap();
-// }
-async fn handle_connection(mut stream: impl Read+Write+Unpin)  {
-    let mut buffer=[0;1024];
-    stream.read(&mut buffer).await.unwrap();
-    let get = b"GET / HTTP/1.1\r\n";
-    let sleep = b"GET /sleep HTTP/1.1\r\n";
-    let (status_line, filename) = if buffer.starts_with(get) {
-        ("HTTP/1.1 200 OK\r\n\r\n", "hello.html")
-    } else if buffer.starts_with(sleep) {
-        task::sleep(Duration::from_secs(5)).await;
-        ("HTTP/1.1 200 OK\r\n\r\n", "hello.html")
+// The query parameters for nodes index
+#[derive(Debug, Deserialize, Default)]
+pub struct Pagination {
+    pub offset: Option<usize>,
+    pub limit: Option<usize>,
+}
+
+async fn nodes_index(
+    pagination: Option<Query<Pagination>>,
+    State(db): State<Db>,
+) -> impl IntoResponse {
+    let nodes = db.read().unwrap();
+
+    let Query(pagination) = pagination.unwrap_or_default();
+
+    let nodes = nodes
+        .values()
+        .skip(pagination.offset.unwrap_or(0))
+        .take(pagination.limit.unwrap_or(usize::MAX))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    Json(nodes)
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateNode {
+    time_day: String,
+    system_ip: String,
+    load_1: u32,
+    load_5: u32,
+    load_15: f32,
+    mem_status_total: String,
+    mem_status_use: String,
+    mem_status_per: u32,
+    mem_status: String,
+    disk_f: String,
+    disk_total: String,
+    disk_free: String,
+    disk_per: u32,
+    disk_f_60: String,
+    disk_per_60: String,
+    disk_status: String,
+}
+
+async fn nodes_create(State(db): State<Db>, Json(input): Json<CreateNode>) -> impl IntoResponse {
+    let todo = Node {
+        id: Uuid::new_v4(),
+        system_ip: input.system_ip,
+        time_day: input.time_day,
+        load_1: input.load_1,
+        load_5: input.load_5,
+        load_15: input.load_15,
+        mem_status_total: input.mem_status_total,
+        mem_status_use: input.mem_status_use,
+        mem_status_per: input.mem_status_per,
+        mem_status: input.mem_status,
+        disk_f: input.disk_f,
+        disk_total: input.disk_total,
+        disk_free: input.disk_free,
+        disk_per: input.disk_per,
+        disk_f_60: input.disk_f_60,
+        disk_per_60: input.disk_per_60,
+        disk_status: input.disk_status,
+    };
+    db.write().unwrap().insert(todo.id, todo.clone());
+
+    (StatusCode::CREATED, Json(todo))
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateNode {
+    time_day: Option<String>,
+    system_ip: Option<String>,
+    load_1: Option<u32>,
+    load_5: Option<u32>,
+    load_15: Option<f32>,
+    mem_status_total: Option<String>,
+    mem_status_use: Option<String>,
+    mem_status_per: Option<u32>,
+    mem_status: Option<String>,
+    disk_f: Option<String>,
+    disk_total: Option<String>,
+    disk_free: Option<String>,
+    disk_per: Option<u32>,
+    disk_f_60: Option<String>,
+    disk_per_60: Option<String>,
+    disk_status: Option<String>,
+}
+
+async fn nodes_update(
+    Path(id): Path<Uuid>,
+    State(db): State<Db>,
+    Json(input): Json<UpdateNode>,
+) -> Result<impl IntoResponse, StatusCode> {
+    let mut todo = db
+        .read()
+        .unwrap()
+        .get(&id)
+        .cloned()
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    // 示例中的代码
+    if let Some(time_day) = input.time_day {
+        todo.time_day = time_day;
+    }
+    if let Some(system_ip) = input.system_ip {
+        todo.system_ip = system_ip;
+    }
+    if let Some(load_1) = input.load_1 {
+        todo.load_1 = load_1;
+    }
+    if let Some(load_5) = input.load_5 {
+        todo.load_5 = load_5;
+    }
+    if let Some(load_15) = input.load_15 {
+        todo.load_15 = load_15;
+    }
+    if let Some(mem_status_total) = input.mem_status_total {
+        todo.mem_status_total = mem_status_total;
+    }
+    if let Some(mem_status_use) = input.mem_status_use {
+        todo.mem_status_use = mem_status_use;
+    }
+    if let Some(mem_status_per) = input.mem_status_per {
+        todo.mem_status_per = mem_status_per;
+    }
+    if let Some(mem_status) = input.mem_status {
+        todo.mem_status = mem_status;
+    }
+    if let Some(disk_f) = input.disk_f {
+        todo.disk_f = disk_f;
+    }
+    if let Some(disk_total) = input.disk_total {
+        todo.disk_total = disk_total;
+    }
+    if let Some(disk_free) = input.disk_free {
+        todo.disk_free = disk_free;
+    }
+    if let Some(disk_per) = input.disk_per {
+        todo.disk_per = disk_per;
+    }
+    if let Some(disk_f_60) = input.disk_f_60 {
+        todo.disk_f_60 = disk_f_60;
+    }
+    if let Some(disk_per_60) = input.disk_per_60 {
+        todo.disk_per_60 = disk_per_60;
+    }
+    if let Some(disk_status) = input.disk_status {
+        todo.disk_status = disk_status;
+    }
+
+    db.write().unwrap().insert(todo.id, todo.clone());
+
+    Ok(Json(todo))
+}
+
+async fn nodes_delete(Path(id): Path<Uuid>, State(db): State<Db>) -> impl IntoResponse {
+    if db.write().unwrap().remove(&id).is_some() {
+        StatusCode::NO_CONTENT
     } else {
-        ("HTTP/1.1 404 NOT FOUND\r\n\r\n", "404.html")
-    };
-    let contents = fs::read_to_string(filename).unwrap();
-    let response = format!("{status_line}{contents}");
-    stream.write(response.as_bytes()).await.unwrap();
-    stream.flush().await.unwrap();
-}
-
-//
-// fn handle_connection(mut stream: TcpStream) {
-//     //读取buf
-//     let buf_reader = BufReader::new(&stream);
-//     let request_line = buf_reader.lines().next().unwrap().unwrap();
-//     //打印http请求
-//     // let http_request: Vec<_> = buf_reader
-//     //     .lines()
-//     //     .map(|result| result.unwrap())
-//     //     .take_while(|line| !line.is_empty())
-//     //     .collect();
-//     // println!("Request: {:#?}", http_request);
-//     // let response = "HTTP/1.1 200 OK\r\n\r\n";
-//     // stream.write_all(response.as_bytes()).unwrap();
-//     if request_line == "GET / HTTP/1.1" {
-//         let status_line = "HTTP/1.1 200 OK";
-//         let contents = fs::read_to_string("hello.html").unwrap();
-//         let length = contents.len();
-//         let response = format!("{status_line}\r\nContent-Length: {length}\r\n\r\n{contents}");
-//         stream.write_all(response.as_bytes()).unwrap();
-//     } else {
-//         let status_line = "HTTP/1.1 404 NOT FOUND";
-//         let contents = fs::read_to_string("404.html").unwrap();
-//         let length = contents.len();
-//
-//         let response = format!("{status_line}\r\nContent-Length: {length}\r\n\r\n{contents}");
-//
-//         stream.write_all(response.as_bytes()).unwrap();
-//     }
-// }
-
-struct MockTcpStream{
-    read_data:Vec<u8>,
-    write_data:Vec<u8>,
-}
-
-impl Read for MockTcpStream {
-    // add code here
-    fn poll_read(
-                self: Pin<&mut Self>,
-                cx: &mut Context<'_>,
-                buf: &mut [u8],
-            ) -> Poll<std::io::Result<usize>> {
-        let size:usize=min(self.read_data.len(), buf.len());
-        buf[..size].copy_from_slice(&self.read_data[..size]);
-        Poll::Ready(Ok(size))
+        StatusCode::NOT_FOUND
     }
 }
 
-impl Write for MockTcpStream {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        _: &mut Context,
-        buf: &[u8],
-    ) -> Poll<Result<usize, Error>> {
-        self.write_data = Vec::from(buf);
+type Db = Arc<RwLock<HashMap<Uuid, Node>>>;
 
-        Poll::Ready(Ok(buf.len()))
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, _: &mut Context) -> Poll<Result<(), Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn poll_close(self: Pin<&mut Self>, _: &mut Context) -> Poll<Result<(), Error>> {
-        Poll::Ready(Ok(()))
-    }
-}
-
-impl Unpin for MockTcpStream {}
-
-
-#[async_std::test]
-async fn test_handle_connection() {
-    let input_bytes = b"GET / HTTP/1.1\r\n";
-    let mut contents = vec![0u8; 1024];
-    contents[..input_bytes.len()].clone_from_slice(input_bytes);
-    let mut stream = MockTcpStream {
-        read_data: contents,
-        write_data: Vec::new(),
-    };
-
-    handle_connection(&mut stream).await;
-    let mut buf = [0u8; 1024];
-    stream.read(&mut buf).await.unwrap();
-
-    let expected_contents = fs::read_to_string("hello.html").unwrap();
-    let expected_response = format!("HTTP/1.1 200 OK\r\n\r\n{}", expected_contents);
-    assert!(stream.write_data.starts_with(expected_response.as_bytes()));
+#[derive(Debug, Serialize, Clone)]
+struct Node {
+    id: Uuid,
+    time_day: String,
+    system_ip: String,
+    load_1: u32,
+    load_5: u32,
+    load_15: f32,
+    mem_status_total: String,
+    mem_status_use: String,
+    mem_status_per: u32,
+    mem_status: String,
+    disk_f: String,
+    disk_total: String,
+    disk_free: String,
+    disk_per: u32,
+    disk_f_60: String,
+    disk_per_60: String,
+    disk_status: String,
 }
