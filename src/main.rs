@@ -103,6 +103,7 @@ async fn nodes_index(
 
 #[derive(Debug, Deserialize)]
 struct CreateNode {
+    system_hostname: String,
     time_day: String,
     system_ip: String,
     load_1: u32,
@@ -123,7 +124,7 @@ struct CreateNode {
 
 async fn nodes_create(State(db): State<Db>, Json(input): Json<CreateNode>) -> impl IntoResponse {
     let todo = Node {
-        id: Uuid::new_v4(),
+        id: input.system_hostname,
         system_ip: input.system_ip,
         time_day: input.time_day,
         load_1: input.load_1,
@@ -141,7 +142,9 @@ async fn nodes_create(State(db): State<Db>, Json(input): Json<CreateNode>) -> im
         disk_per_60: input.disk_per_60,
         disk_status: input.disk_status,
     };
-    db.write().unwrap().insert(todo.id, todo.clone());
+    db.write()
+        .unwrap()
+        .insert(String::from(&todo.id), todo.clone());
 
     (StatusCode::CREATED, Json(todo))
 }
@@ -167,7 +170,7 @@ struct UpdateNode {
 }
 
 async fn nodes_update(
-    Path(id): Path<Uuid>,
+    Path(id): Path<String>,
     State(db): State<Db>,
     Json(input): Json<UpdateNode>,
 ) -> Result<impl IntoResponse, StatusCode> {
@@ -228,12 +231,14 @@ async fn nodes_update(
         todo.disk_status = disk_status;
     }
 
-    db.write().unwrap().insert(todo.id, todo.clone());
+    db.write()
+        .unwrap()
+        .insert(String::from(&todo.id), todo.clone());
 
     Ok(Json(todo))
 }
 
-async fn nodes_delete(Path(id): Path<Uuid>, State(db): State<Db>) -> impl IntoResponse {
+async fn nodes_delete(Path(id): Path<String>, State(db): State<Db>) -> impl IntoResponse {
     if db.write().unwrap().remove(&id).is_some() {
         StatusCode::NO_CONTENT
     } else {
@@ -241,11 +246,11 @@ async fn nodes_delete(Path(id): Path<Uuid>, State(db): State<Db>) -> impl IntoRe
     }
 }
 
-type Db = Arc<RwLock<HashMap<Uuid, Node>>>;
+type Db = Arc<RwLock<HashMap<String, Node>>>;
 
 #[derive(Debug, Serialize, Clone)]
 struct Node {
-    id: Uuid,
+    id: String,
     time_day: String,
     system_ip: String,
     load_1: u32,
