@@ -1,4 +1,6 @@
 #!/bin/bash
+base_url="http://127.0.0.1:3000"
+#基本信息
 time_day=$(date +%Y-%m-%d_%H:%M:%S)
 time_cront=$(date +%Y%m%d%H%M%S)
 time_cront_day=$(date +%Y%m%d)
@@ -72,13 +74,24 @@ else
 	mem_status=正常
 fi
 
+is_init=false
 if [[ ! -s $path ]] || [[ $(grep 统计时间 $path | wc -l) -eq 0 ]]; then
-	echo -e "统计时间 服务器IP 系统进程数 CPU空闲id 僵尸进程数 总内存大小 已用内存 内存使用率 内存巡检状态 分区 数据盘总空间 数据盘剩余空间 数据盘磁盘使用率 磁盘超60使用分区 磁盘超60使用率 磁盘状况" >>$path
+	echo -e "统计时间 主机名 服务器IP 系统进程数 CPU空闲id 僵尸进程数 总内存大小 已用内存 内存使用率 内存巡检状态 分区 数据盘总空间 数据盘剩余空间 数据盘磁盘使用率 磁盘超60使用分区 磁盘超60使用率 磁盘状况" >>$path
+	is_init=true
 fi
-# echo -e "$time_day $system_ip $load_1 $load_15 $load_5 $mem_status_total $mem_status_use $mem_status_per $mem_status $disk_f $disk_total $disk_free $disk_per $disk_f_60 $disk_per_60 $disk_status" >>$path
+# echo -e "input: $time_day $system_hostname $system_ip $load_1 $load_15 $load_5 $mem_status_total $mem_status_use $mem_status_per $mem_status $disk_f $disk_total $disk_free $disk_per $disk_f_60 $disk_per_60 $disk_status" >>$path
 # 将变量以json形式打印
 node_json="{\"system_hostname\":\"$system_hostname\",\"time_day\": \"$time_day\", \"system_ip\": \"$system_ip\", \"load_1\": $load_1, \"load_5\": $load_5, \"load_15\": $load_15, \"mem_status_total\": \"$mem_status_total\", \"mem_status_use\": \"$mem_status_use\", \"mem_status_per\": $PERCENT_1, \"mem_status\": \"$mem_status\", \"disk_f\": \"$disk_f\", \"disk_total\": \"$disk_total\", \"disk_free\": \"$disk_free\", \"disk_per\": $disk_per_1, \"disk_f_60\": \"$disk_f_60\", \"disk_per_60\": \"$disk_per_60\", \"disk_status\": \"$disk_status\"}"
-echo $node_json >>$path
-
+echo -e "input: $node_json" >>$path
+# 定义变量
 # 发送HTTP POST请求
-curl -d "$node_json" -H "Content-Type: application/json" -X POST http://127.0.0.1:3000/http
+# if [[ $is_init == true ]]; then
+	# echo "初始化 首次上报" >>$path
+	# curl_output=$(curl --trace-ascii $path -d "$node_json" -H "Content-Type: application/json" -X POST "${base_url}/nodes")
+	curl_output=$(curl -d "$node_json" -H "Content-Type: application/json" -X POST "${base_url}/nodes")
+# else
+	# echo "已初始化 开始定期上报" >>$path
+	# curl_output=$(curl --trace-ascii $path -d "$node_json" -H "Content-Type: application/json" -X POST "${base_url}/nodes/${system_hostname}")
+	# curl_output=$(curl -d "$node_json" -H "Content-Type: application/json" -X POST "${base_url}/nodes/${system_hostname}")
+# fi
+echo "output: $curl_output" >>$path
