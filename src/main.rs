@@ -31,6 +31,7 @@ use std::{
 use tower::{BoxError, ServiceBuilder};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() {
@@ -42,8 +43,21 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let db = Db::default();
 
+    // Init Monitor
+    let (tx, mut rx )=mpsc::channel(32);
+    tokio::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            match event {
+                Event::NodeUpdate(node)=>{
+                    println!("recv node update{}",node);
+                }
+            }
+        }
+    });
+
+    // let db = Db::default();
+    let app_state=Arc::new(AppState{ db: RwLock::new(HashMap::new()), tx });
     // Compose the routes
     let app = Router::new()
         .route("/nodes", get(nodes_index).post(nodes_create))
@@ -65,8 +79,10 @@ async fn main() {
                 .layer(TraceLayer::new_for_http())
                 .into_inner(),
         )
-        .with_state(db);
+        .with_state(app_state);
 
+
+    // Init server & wait
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     tracing::debug!("listening on {}", addr);
     axum::Server::bind(&addr)
@@ -84,9 +100,9 @@ pub struct Pagination {
 
 async fn nodes_index(
     pagination: Option<Query<Pagination>>,
-    State(db): State<Db>,
+    State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let nodes = db.read().unwrap();
+    let nodes = state.db.read().unwrap();
 
     let Query(pagination) = pagination.unwrap_or_default();
 
@@ -121,7 +137,7 @@ struct CreateNode {
     disk_status: String,
 }
 
-async fn nodes_create(State(db): State<Db>, Json(input): Json<CreateNode>) -> impl IntoResponse {
+async fn nodes_create(State(state): State<Arc<AppState>>, Json(input): Json<CreateNode>) -> impl IntoResponse {
     let todo = Node {
         id: input.system_hostname,
         system_ip: input.system_ip,
@@ -141,7 +157,7 @@ async fn nodes_create(State(db): State<Db>, Json(input): Json<CreateNode>) -> im
         disk_per_60: input.disk_per_60,
         disk_status: input.disk_status,
     };
-    db.write()
+    state.db.write()
         .unwrap()
         .insert(String::from(&todo.id), todo.clone());
 
@@ -170,10 +186,10 @@ struct UpdateNode {
 
 async fn nodes_update(
     Path(id): Path<String>,
-    State(db): State<Db>,
+    State(state): State<Arc<AppState>>,
     Json(input): Json<UpdateNode>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    let mut todo = db
+    let mut todo = state.db
         .read()
         .unwrap()
         .get(&id)
@@ -230,19 +246,23 @@ async fn nodes_update(
         todo.disk_status = disk_status;
     }
 
-    db.write()
+    state.db.write()
         .unwrap()
         .insert(String::from(&todo.id), todo.clone());
 
     Ok(Json(todo))
 }
 
-async fn nodes_delete(Path(id): Path<String>, State(db): State<Db>) -> impl IntoResponse {
-    if db.write().unwrap().remove(&id).is_some() {
+async fn nodes_delete(Path(id): Path<String>, State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    if state.db.write().unwrap().remove(&id).is_some() {
         StatusCode::NO_CONTENT
     } else {
         StatusCode::NOT_FOUND
     }
+}
+struct AppState {
+    db:RwLock<HashMap<String, Node>>,
+    tx:mpsc::Sender<Event>,
 }
 
 type Db = Arc<RwLock<HashMap<String, Node>>>;
@@ -267,3 +287,10 @@ struct Node {
     disk_per_60: String,
     disk_status: String,
 }
+
+// Monitor
+enum Event {
+   NodeUpdate(Node),
+}
+
+
