@@ -36,7 +36,7 @@ impl EmailSender {
             .from(from.parse()?)
             .to(to.parse()?)
             .subject(subject)
-            .body(body.into())?;
+            .body(String::from(body))?;
 
         let credentials = Credentials::new(self.smtp_username.clone(), self.smtp_password.clone());
         let mailer = SmtpTransport::relay(&self.smtp_server)

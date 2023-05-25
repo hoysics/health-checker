@@ -47,10 +47,11 @@ async fn main() {
     // Init Monitor
     let (tx, mut rx )=mpsc::channel(32);
     tokio::spawn(async move {
+        println!("event listening");
         while let Some(event) = rx.recv().await {
             match event {
                 Event::NodeUpdate(node)=>{
-                    println!("recv node update{}",node);
+                    println!("recv node update{:?}",node);
                 }
             }
         }
@@ -250,7 +251,19 @@ async fn nodes_update(
         .unwrap()
         .insert(String::from(&todo.id), todo.clone());
 
+    if is_node_unhealth(&todo) {
+        let tx=state.tx.clone();
+        tx.send(Event::NodeUpdate(todo.clone())).await.unwrap();
+
+    }
+
+
     Ok(Json(todo))
+}
+
+fn is_node_unhealth(node: &Node)  -> bool{
+    println!("check node {:?}",node);
+    node.load_1>80
 }
 
 async fn nodes_delete(Path(id): Path<String>, State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -289,8 +302,9 @@ struct Node {
 }
 
 // Monitor
+#[derive(Debug)]
 enum Event {
-   NodeUpdate(Node),
+    NodeUpdate(Node),
 }
 
 
