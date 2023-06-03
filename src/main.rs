@@ -32,7 +32,7 @@ use tokio::sync::mpsc;
 use tower::{BoxError, ServiceBuilder};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-// use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[tokio::main]
 async fn main() {
@@ -45,15 +45,17 @@ async fn main() {
         .init();
 
     //TODO: 初始化配置
-    //TODO 根据配置生成医生
+    //TODO: 根据配置生成医生
     let dc=Doctor::new();
+    let dc1=Doctor::new();
     // 节点监听服务用的channel
     let (tx1, mut rx1) = mpsc::channel(32);
     // 定时器用的channel
     // let (tx1, mut rx2) = mpsc::channel(32);
+    //2. 启动用于监听节点状态和服务状态的任务 
     tokio::spawn(async move {
         // Init Monitor
-        let monitor=Monitor::new();
+        let mut monitor=Monitor::new(dc1);
         println!("into watch");
         loop {
             tokio::select! {
@@ -63,7 +65,12 @@ async fn main() {
         }
         println!("break watch");
     });
-    // let db = Db::default();
+    //3. 启动用于轮询各服务Health接口的任务
+    //   同时此任务负责定时通知Monitor遍历节点以检查有哪些节点超时未更新
+    tokio::spawn(async move {
+
+    });
+    //4. 启动监听节点健康状况的服务
     let app_state = Arc::new(AppState {
         db: RwLock::new(HashMap::new()),
         tx:tx1,
@@ -169,6 +176,10 @@ async fn node_upsert(
         disk_f_60: input.disk_f_60,
         disk_per_60: input.disk_per_60,
         disk_status: input.disk_status,
+        last_updated: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
     };
     state
         .db
@@ -232,8 +243,17 @@ struct Node {
     disk_f_60: String,
     disk_per_60: String,
     disk_status: String,
+    last_updated: u64,
 }
 
+#[derive(Debug)]
+struct Service {
+    host: String,
+    api:String,
+    name:String,
+    latency: u128,
+    last_updated: u64,
+}
 #[derive(Debug)]
 enum Health {
     Red,
@@ -249,16 +269,29 @@ enum NodeEvent {
     Offline(String),
 }
 
+#[derive(Debug)]
+struct HealthInfo {
+    node: Option<Node>,
+    service: Option<Service>,
+    status: Health,
+    reason: String,
+}
+
 // 记录数据同时判断是否需要报警
 struct Monitor {
     db: HashMap<String, Node>,//存储原始的节点信息
+    dc: Doctor,
 }
 
 impl Monitor {
-    fn new() ->Monitor{
-        Monitor {db:HashMap::new()}
+    fn new(dc:Doctor) ->Monitor{
+        Monitor {db:HashMap::new(), dc}
     }
-    fn log(&self,event: NodeEvent){
+    fn log(&mut self,event: NodeEvent){
+        //TODO: 带颜色的打印控制台日志
+        //1. 打印日志 记录节点状态
+        //2. 将节点状况计入Map中
+        //3. 根据不同情况 决定是否立即邮件抱紧
         match event {
             NodeEvent::Trace(node)=>{
                 println!("node work good: {:?}",node);
@@ -272,13 +305,50 @@ impl Monitor {
 
             },
             NodeEvent::Offline(id)=>{
-
+                self.db.remove(&id);
                 println!("node({:?}) get offline",id);
             },
         };
     }
     fn check_nodes(&self){
+        let mut result: Vec<HealthInfo>=Vec::new();
+        let cur_time= SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        //TODO: 遍历Map 检查每个节点的健康状态
+        for (_,node) in self.db.iter()   {
+            let info=if cur_time-node.last_updated>600 {
+                // 暂时不做：先检查一下服务器上端口的健康状态
+                // 如果正常 则仅记录本次为节点监控失效
+                // 如果不正常 则发出警告: 节点和服务均下线
+                HealthInfo{ 
+                    node: Some(node.clone()),
+                    service: None,
+                    status: Health::Red,
+                    reason:String::from( "node did'nt update too too long"),
+                }
+            }else if cur_time-node.last_updated>300 {
+                HealthInfo{ 
+                    node: Some(node.clone()),
+                    service: None,
+                    status: Health::Yellow,
+                    reason:String::from( "node did'nt update too long"),
+                }
+            } else {
+                HealthInfo{ 
+                    node: Some(node.clone()),
+                    service: None,
+                    status: Health::Green,
+                    reason:String::from( "node update good"),
+                }
+            };
+            result.push(info);
 
+        };
+        //1. 将状态先输出至单独的本地文件 用以留档
+        println!("finished check nodes\n{:?}",result);
+        //2. 发邮件通知当前的文件健康状态
     }
     // fn trace(&self,node: &Node){
     //
