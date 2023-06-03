@@ -18,7 +18,7 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, patch},
+    routing::{get,delete},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -28,10 +28,11 @@ use std::{
     sync::{Arc, RwLock},
     time::Duration,
 };
+use tokio::sync::mpsc;
 use tower::{BoxError, ServiceBuilder};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use tokio::sync::mpsc;
+// use std::time::{SystemTime, UNIX_EPOCH};
 
 #[tokio::main]
 async fn main() {
@@ -43,26 +44,35 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-
-    // Init Monitor
-    let (tx, mut rx )=mpsc::channel(32);
+    //TODO: 初始化配置
+    //TODO 根据配置生成医生
+    let dc=Doctor::new();
+    // 节点监听服务用的channel
+    let (tx1, mut rx1) = mpsc::channel(32);
+    // 定时器用的channel
+    // let (tx1, mut rx2) = mpsc::channel(32);
     tokio::spawn(async move {
-        println!("event listening");
-        while let Some(event) = rx.recv().await {
-            match event {
-                Event::NodeUpdate(node)=>{
-                    println!("recv node update{:?}",node);
-                }
-            }
+        // Init Monitor
+        let monitor=Monitor::new();
+        println!("into watch");
+        loop {
+            tokio::select! {
+                Some(event)=rx1.recv()=> monitor.log(event),
+                else => { break }
+            };
         }
+        println!("break watch");
     });
-
     // let db = Db::default();
-    let app_state=Arc::new(AppState{ db: RwLock::new(HashMap::new()), tx });
+    let app_state = Arc::new(AppState {
+        db: RwLock::new(HashMap::new()),
+        tx:tx1,
+        dc ,
+    });
     // Compose the routes
     let app = Router::new()
-        .route("/nodes", get(nodes_index).post(nodes_create))
-        .route("/nodes/:id", patch(nodes_update).delete(nodes_delete))
+        .route("/nodes", get(nodes_index).post(node_upsert))
+        .route("/nodes/:id", delete(node_delete))
         // Add middleware to all routes
         .layer(
             ServiceBuilder::new()
@@ -81,7 +91,6 @@ async fn main() {
                 .into_inner(),
         )
         .with_state(app_state);
-
 
     // Init server & wait
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
@@ -118,7 +127,7 @@ async fn nodes_index(
 }
 
 #[derive(Debug, Deserialize)]
-struct CreateNode {
+struct UpsertNode {
     system_hostname: String,
     time_day: String,
     system_ip: String,
@@ -138,7 +147,10 @@ struct CreateNode {
     disk_status: String,
 }
 
-async fn nodes_create(State(state): State<Arc<AppState>>, Json(input): Json<CreateNode>) -> impl IntoResponse {
+async fn node_upsert(
+    State(state): State<Arc<AppState>>,
+    Json(input): Json<UpsertNode>,
+) -> impl IntoResponse {
     let todo = Node {
         id: input.system_hostname,
         system_ip: input.system_ip,
@@ -158,127 +170,48 @@ async fn nodes_create(State(state): State<Arc<AppState>>, Json(input): Json<Crea
         disk_per_60: input.disk_per_60,
         disk_status: input.disk_status,
     };
-    state.db.write()
+    state
+        .db
+        .write()
         .unwrap()
         .insert(String::from(&todo.id), todo.clone());
-
-    (StatusCode::CREATED, Json(todo))
+    //TODO: check health. if unhealth, tell node.
+    let health=state.dc.check_node(&todo);
+    let tx=state.tx.clone();
+    match health {
+        Health::Green=> {
+            tx.send(NodeEvent::Trace(todo.clone())).await.unwrap();
+        },
+        Health::Yellow => {
+            tx.send(NodeEvent::Warn(todo.clone())).await.unwrap();
+        },
+        Health::Red=>{
+            tx.send(NodeEvent::Error(todo.clone())).await.unwrap();
+        },
+    };
+    (StatusCode::OK, Json(todo))
 }
 
-#[derive(Debug, Deserialize)]
-struct UpdateNode {
-    time_day: Option<String>,
-    system_ip: Option<String>,
-    load_1: Option<u32>,
-    load_5: Option<u32>,
-    load_15: Option<f32>,
-    mem_status_total: Option<String>,
-    mem_status_use: Option<String>,
-    mem_status_per: Option<u32>,
-    mem_status: Option<String>,
-    disk_f: Option<String>,
-    disk_total: Option<String>,
-    disk_free: Option<String>,
-    disk_per: Option<u32>,
-    disk_f_60: Option<String>,
-    disk_per_60: Option<String>,
-    disk_status: Option<String>,
-}
 
-async fn nodes_update(
+async fn node_delete(
     Path(id): Path<String>,
     State(state): State<Arc<AppState>>,
-    Json(input): Json<UpdateNode>,
-) -> Result<impl IntoResponse, StatusCode> {
-    let mut todo = state.db
-        .read()
-        .unwrap()
-        .get(&id)
-        .cloned()
-        .ok_or(StatusCode::NOT_FOUND)?;
-
-    // 示例中的代码
-    if let Some(time_day) = input.time_day {
-        todo.time_day = time_day;
-    }
-    if let Some(system_ip) = input.system_ip {
-        todo.system_ip = system_ip;
-    }
-    if let Some(load_1) = input.load_1 {
-        todo.load_1 = load_1;
-    }
-    if let Some(load_5) = input.load_5 {
-        todo.load_5 = load_5;
-    }
-    if let Some(load_15) = input.load_15 {
-        todo.load_15 = load_15;
-    }
-    if let Some(mem_status_total) = input.mem_status_total {
-        todo.mem_status_total = mem_status_total;
-    }
-    if let Some(mem_status_use) = input.mem_status_use {
-        todo.mem_status_use = mem_status_use;
-    }
-    if let Some(mem_status_per) = input.mem_status_per {
-        todo.mem_status_per = mem_status_per;
-    }
-    if let Some(mem_status) = input.mem_status {
-        todo.mem_status = mem_status;
-    }
-    if let Some(disk_f) = input.disk_f {
-        todo.disk_f = disk_f;
-    }
-    if let Some(disk_total) = input.disk_total {
-        todo.disk_total = disk_total;
-    }
-    if let Some(disk_free) = input.disk_free {
-        todo.disk_free = disk_free;
-    }
-    if let Some(disk_per) = input.disk_per {
-        todo.disk_per = disk_per;
-    }
-    if let Some(disk_f_60) = input.disk_f_60 {
-        todo.disk_f_60 = disk_f_60;
-    }
-    if let Some(disk_per_60) = input.disk_per_60 {
-        todo.disk_per_60 = disk_per_60;
-    }
-    if let Some(disk_status) = input.disk_status {
-        todo.disk_status = disk_status;
-    }
-
-    state.db.write()
-        .unwrap()
-        .insert(String::from(&todo.id), todo.clone());
-
-    if is_node_unhealth(&todo) {
-        let tx=state.tx.clone();
-        tx.send(Event::NodeUpdate(todo.clone())).await.unwrap();
-
-    }
-
-
-    Ok(Json(todo))
-}
-
-fn is_node_unhealth(node: &Node)  -> bool{
-    println!("check node {:?}",node);
-    node.load_1>80
-}
-
-async fn nodes_delete(Path(id): Path<String>, State(state): State<Arc<AppState>>) -> impl IntoResponse {
+) -> impl IntoResponse {
+    let tx=state.tx.clone();
+    tx.send(NodeEvent::Offline(id.clone())).await.unwrap();
     if state.db.write().unwrap().remove(&id).is_some() {
         StatusCode::NO_CONTENT
     } else {
         StatusCode::NOT_FOUND
     }
 }
+
 struct AppState {
-    db:RwLock<HashMap<String, Node>>,
-    tx:mpsc::Sender<Event>,
+    db: RwLock<HashMap<String, Node>>,
+    tx: mpsc::Sender<NodeEvent>,
+    dc: Doctor,
 }
 
-type Db = Arc<RwLock<HashMap<String, Node>>>;
 
 #[derive(Debug, Serialize, Clone)]
 struct Node {
@@ -301,10 +234,82 @@ struct Node {
     disk_status: String,
 }
 
-// Monitor
 #[derive(Debug)]
-enum Event {
-    NodeUpdate(Node),
+enum Health {
+    Red,
+    Yellow,
+    Green,
 }
 
+#[derive(Debug)]
+enum NodeEvent {
+    Trace(Node),
+    Warn(Node),
+    Error(Node),
+    Offline(String),
+}
 
+// 记录数据同时判断是否需要报警
+struct Monitor {
+    db: HashMap<String, Node>,//存储原始的节点信息
+}
+
+impl Monitor {
+    fn new() ->Monitor{
+        Monitor {db:HashMap::new()}
+    }
+    fn log(&self,event: NodeEvent){
+        match event {
+            NodeEvent::Trace(node)=>{
+                println!("node work good: {:?}",node);
+            },
+            NodeEvent::Warn(node)=>{
+                println!("node warning: {:?}",node);
+
+            },
+            NodeEvent::Error(node)=>{
+                println!("node overload: {:?}",node);
+
+            },
+            NodeEvent::Offline(id)=>{
+
+                println!("node({:?}) get offline",id);
+            },
+        };
+    }
+    fn check_nodes(&self){
+
+    }
+    // fn trace(&self,node: &Node){
+    //
+    // }
+    // fn warn(&self,node: &Node){
+    //
+    // }
+    // fn error(&self,node: &Node){
+    //
+    // }
+    // fn offline(&self,node: String){
+    //
+    // }
+}
+//TODO: 由配置文件加载的节点健康状态判断
+struct Doctor {
+
+}
+
+impl Doctor {
+    fn new()->Doctor {
+        Doctor{}
+    }
+    fn check_node(&self,node: &Node) ->Health{
+        if node.load_1>80 {
+            return Health::Red
+        }
+        if node.load_1>60 {
+            return Health::Yellow
+        }
+        Health::Green
+    }
+    fn check_service(&self){ }
+}
