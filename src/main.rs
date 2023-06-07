@@ -26,7 +26,6 @@ use std::{
     collections::HashMap,
     net::SocketAddr,
     sync::{Arc, RwLock},
-    time::Duration,
 };
 use tokio::sync::mpsc;
 use tokio::time;
@@ -56,7 +55,7 @@ async fn main() {
     //2. 启动用于监听节点状态和服务状态的任务 
     tokio::spawn(async move {
         // Init Monitor
-        let mut monitor=Monitor::new(dc1);
+        let  monitor=Monitor::new(dc1);
         println!("into watch");
         loop {
             tokio::select! {
@@ -69,12 +68,20 @@ async fn main() {
     //3. 启动用于轮询各服务Health接口的任务
     //   同时此任务负责定时通知Monitor遍历节点以检查有哪些节点超时未更新
     let mut services=Vec::new();
-    services.push("http://127.0.0.1:9000");
+    services.push("https://www.rust-lang.org");
     tokio::spawn(async move {
-        let mut interval = time::interval(time::Duration::from_secs(5));
+        //TODO: Graceful Shutdown
         loop {
-            interval.tick().await;
             println!("linglingling");
+            time::sleep(time::Duration::from_secs(5));
+            for srv in services {
+                let body = reqwest::get(srv)
+                    .await?
+                    .text()
+                .await?;
+
+                println!("body = {:?}", body);
+            }
         }
     });
 
@@ -101,7 +108,7 @@ async fn main() {
                         ))
                     }
                 }))
-                .timeout(Duration::from_secs(10))
+                .timeout(time::Duration::from_secs(10))
                 .layer(TraceLayer::new_for_http())
                 .into_inner(),
         )
