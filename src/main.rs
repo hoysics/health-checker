@@ -29,6 +29,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::mpsc;
+use tokio::time;
 use tower::{BoxError, ServiceBuilder};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -67,9 +68,16 @@ async fn main() {
     });
     //3. 启动用于轮询各服务Health接口的任务
     //   同时此任务负责定时通知Monitor遍历节点以检查有哪些节点超时未更新
+    let mut services=Vec::new();
+    services.push("http://127.0.0.1:9000");
     tokio::spawn(async move {
-
+        let mut interval = time::interval(time::Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            println!("linglingling");
+        }
     });
+
     //4. 启动监听节点健康状况的服务
     let app_state = Arc::new(AppState {
         db: RwLock::new(HashMap::new()),
@@ -158,7 +166,7 @@ async fn node_upsert(
     State(state): State<Arc<AppState>>,
     Json(input): Json<UpsertNode>,
 ) -> impl IntoResponse {
-    let todo = Node {
+    let mut todo = Node {
         id: input.system_hostname,
         system_ip: input.system_ip,
         time_day: input.time_day,
@@ -180,6 +188,7 @@ async fn node_upsert(
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs(),
+        status_msg:Option::None,
     };
     state
         .db
@@ -187,19 +196,10 @@ async fn node_upsert(
         .unwrap()
         .insert(String::from(&todo.id), todo.clone());
     //TODO: check health. if unhealth, tell node.
-    let health=state.dc.check_node(&todo);
+    let (health,msg)=state.dc.check_node(&todo);
+    todo.status_msg=Some(msg);
     let tx=state.tx.clone();
-    match health {
-        Health::Green=> {
-            tx.send(NodeEvent::Trace(todo.clone())).await.unwrap();
-        },
-        Health::Yellow => {
-            tx.send(NodeEvent::Warn(todo.clone())).await.unwrap();
-        },
-        Health::Red=>{
-            tx.send(NodeEvent::Error(todo.clone())).await.unwrap();
-        },
-    };
+    tx.send(Event::Heartbeat(HealthInfo { target: Target::Node(String::from(&todo.id),Some(todo.clone())), status: health})).await.unwrap();
     (StatusCode::OK, Json(todo))
 }
 
@@ -209,7 +209,7 @@ async fn node_delete(
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
     let tx=state.tx.clone();
-    tx.send(NodeEvent::Offline(id.clone())).await.unwrap();
+    tx.send(Event::Offline(Target::Node(String::from(&id), Option::None))).await.unwrap();
     if state.db.write().unwrap().remove(&id).is_some() {
         StatusCode::NO_CONTENT
     } else {
@@ -219,7 +219,7 @@ async fn node_delete(
 
 struct AppState {
     db: RwLock<HashMap<String, Node>>,
-    tx: mpsc::Sender<NodeEvent>,
+    tx: mpsc::Sender<Event>,
     dc: Doctor,
 }
 
@@ -244,6 +244,7 @@ struct Node {
     disk_per_60: String,
     disk_status: String,
     last_updated: u64,
+    status_msg:Option<String>,
 }
 
 #[derive(Debug)]
@@ -254,27 +255,30 @@ struct Service {
     latency: u128,
     last_updated: u64,
 }
+
 #[derive(Debug)]
-enum Health {
+enum HealthStatus {
     Red,
     Yellow,
     Green,
 }
 
 #[derive(Debug)]
-enum NodeEvent {
-    Trace(Node),
-    Warn(Node),
-    Error(Node),
-    Offline(String),
+enum Target {
+    Node(String,Option<Node>),
+    Service(String,Option<Service>),
+}
+
+#[derive(Debug)]
+enum Event {
+    Heartbeat(HealthInfo),
+    Offline(Target),
 }
 
 #[derive(Debug)]
 struct HealthInfo {
-    node: Option<Node>,
-    service: Option<Service>,
-    status: Health,
-    reason: String,
+    target: Target,
+    status: HealthStatus,
 }
 
 // 记录数据同时判断是否需要报警
@@ -287,64 +291,38 @@ impl Monitor {
     fn new(dc:Doctor) ->Monitor{
         Monitor {db:HashMap::new(), dc}
     }
-    fn log(&mut self,event: NodeEvent){
+    fn log(&self,event: Event){
         //TODO: 带颜色的打印控制台日志
         //1. 打印日志 记录节点状态
         //2. 将节点状况计入Map中
         //3. 根据不同情况 决定是否立即邮件抱紧
         match event {
-            NodeEvent::Trace(node)=>{
-                println!("node work good: {:?}",node);
+            Event::Heartbeat(info) => {
+                match info.target {
+                    Target::Node(id, node) => self.update_node(id,node),
+                    Target::Service(name, service) => self.update_service(name,service),
+                };
             },
-            NodeEvent::Warn(node)=>{
-                println!("node warning: {:?}",node);
-
-            },
-            NodeEvent::Error(node)=>{
-                println!("node overload: {:?}",node);
-
-            },
-            NodeEvent::Offline(id)=>{
-                self.db.remove(&id);
-                println!("node({:?}) get offline",id);
-            },
+            Event::Offline(target) => self.offline(target),
         };
     }
-    fn check_nodes(&self){
+    fn update_node(&self,id: String,node:Option<Node>) {
+        
+    }
+    fn update_service(&self,name:String,service:Option<Service>) {
+        
+    }
+    fn offline(&self,target:Target) {
+        
+    }
+    fn tranverse_check(&self){
         let mut result: Vec<HealthInfo>=Vec::new();
-        let cur_time= SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
         //TODO: 遍历Map 检查每个节点的健康状态
-        for (_,node) in self.db.iter()   {
-            let info=if cur_time-node.last_updated>600 {
-                // 暂时不做：先检查一下服务器上端口的健康状态
-                // 如果正常 则仅记录本次为节点监控失效
-                // 如果不正常 则发出警告: 节点和服务均下线
-                HealthInfo{ 
-                    node: Some(node.clone()),
-                    service: None,
-                    status: Health::Red,
-                    reason:String::from( "node did'nt update too too long"),
-                }
-            }else if cur_time-node.last_updated>300 {
-                HealthInfo{ 
-                    node: Some(node.clone()),
-                    service: None,
-                    status: Health::Yellow,
-                    reason:String::from( "node did'nt update too long"),
-                }
-            } else {
-                HealthInfo{ 
-                    node: Some(node.clone()),
-                    service: None,
-                    status: Health::Green,
-                    reason:String::from( "node update good"),
-                }
-            };
-            result.push(info);
-
+        for (id,node) in self.db.iter()   {
+            let (status,msg)=self.dc.check_node(node);
+            let mut n=node.clone();
+            n.status_msg=Some(msg);
+            result.push(HealthInfo { target: Target::Node(String::from(id), Some(n)), status });
         };
         //1. 将状态先输出至单独的本地文件 用以留档
         println!("finished check nodes\n{:?}",result);
@@ -372,14 +350,26 @@ impl Doctor {
     fn new()->Doctor {
         Doctor{}
     }
-    fn check_node(&self,node: &Node) ->Health{
+    fn check_node(&self,node: &Node) ->(HealthStatus,String){
         if node.load_1>80 {
-            return Health::Red
+            return (HealthStatus::Red,"load too high".to_string())
         }
         if node.load_1>60 {
-            return Health::Yellow
+            return (HealthStatus::Yellow,"".to_string())
         }
-        Health::Green
+        let cur_time= SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        if cur_time-node.last_updated>600 {
+            // 暂时不做：先检查一下服务器上端口的健康状态
+            // 如果正常 则仅记录本次为节点监控失效
+            // 如果不正常 则发出警告: 节点和服务均下线
+            return (HealthStatus::Red,"".to_string())
+        }else if cur_time-node.last_updated>300 {
+            return (HealthStatus::Yellow,"".to_string())
+        } 
+        (HealthStatus::Green,"".to_string())
     }
     fn check_service(&self){ }
 }
