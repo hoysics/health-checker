@@ -1,4 +1,66 @@
+use crate::core::doctor::*;
+use crate::core::ent::*;
+
 // The query parameters for nodes index
+use axum::{
+    error_handling::HandleErrorLayer,
+    extract::{Path, Query, State},
+    http::StatusCode,
+    response::IntoResponse,
+    routing::{delete, get},
+    Json, Router,
+};
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{Arc, RwLock},
+    time::{SystemTime, UNIX_EPOCH},
+};
+use tokio::sync::mpsc;
+use tokio::time;
+use tower::{BoxError, ServiceBuilder};
+use tower_http::trace::TraceLayer;
+// use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+pub async fn watch(tx: mpsc::Sender<Event>, dc: Doctor) {
+    let app_state = Arc::new(AppState {
+        db: RwLock::new(HashMap::new()),
+        tx: tx,
+        dc,
+    });
+    // Compose the routes
+    let app = Router::new()
+        .route("/nodes", get(nodes_index).post(node_upsert))
+        .route("/nodes/:id", delete(node_delete))
+        // Add middleware to all routes
+        .layer(
+            ServiceBuilder::new()
+                .layer(HandleErrorLayer::new(|error: BoxError| async move {
+                    if error.is::<tower::timeout::error::Elapsed>() {
+                        Ok(StatusCode::REQUEST_TIMEOUT)
+                    } else {
+                        Err((
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("Unhandled internal error: {}", error),
+                        ))
+                    }
+                }))
+                .timeout(time::Duration::from_secs(10))
+                .layer(TraceLayer::new_for_http())
+                .into_inner(),
+        )
+        .with_state(app_state);
+
+    // Init server & wait
+    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    tracing::debug!("listening on {}", addr);
+    axum::Server::bind(&addr)
+        .serve(app.into_make_service())
+        .await
+        .unwrap();
+}
+
 #[derive(Debug, Deserialize, Default)]
 pub struct Pagination {
     pub offset: Option<usize>,
@@ -24,7 +86,7 @@ async fn nodes_index(
 }
 
 #[derive(Debug, Deserialize)]
-pub struct UpsertNode {
+struct UpsertNode {
     system_hostname: String,
     time_day: String,
     system_ip: String,
