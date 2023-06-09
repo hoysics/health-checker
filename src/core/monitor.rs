@@ -30,8 +30,12 @@ impl Monitor {
             Event::Offline(target) => self.offline(target),
         };
     }
-    fn update_node(&self, id: String, node: Option<Node>) {}
-    fn update_service(&self, name: String, service: Option<Service>) {}
+    fn update_node(&self, id: String, node: Option<Node>) {
+        println!("try to update node {:?},{:?}", id, node);
+    }
+    fn update_service(&self, name: String, service: Option<Service>) {
+        println!("try to update service {:?},{:?}", name, service);
+    }
     fn offline(&self, target: Target) {}
     fn tranverse_check(&self) {
         let mut result: Vec<HealthInfo> = Vec::new();

@@ -32,9 +32,11 @@ async fn main() {
     //TODO: 初始化配置
     //TODO: 根据配置生成医生
     let dc = Doctor::new();
-    let dc1 = Doctor::new();
+    let dc1 = dc.clone();
+    let dc2 = dc.clone();
     // 节点监听服务用的channel
     let (tx1, mut rx1) = mpsc::channel(32);
+    let tx2 = tx1.clone();
     // 定时器用的channel
     // let (tx1, mut rx2) = mpsc::channel(32);
     //2. 启动用于监听节点状态和服务状态的任务
@@ -53,21 +55,24 @@ async fn main() {
     //3. 启动用于轮询各服务Health接口的任务
     //   同时此任务负责定时通知Monitor遍历节点以检查有哪些节点超时未更新
     let mut services = Vec::new();
-    services.push("https://www.rust-lang.org");
+    services.push("https://www.rust-lang.org".to_string());
     tokio::spawn(async move {
         //TODO: Graceful Shutdown
         loop {
             println!("linglingling");
-            time::sleep(time::Duration::from_secs(5)).await;
+            time::sleep(time::Duration::from_secs(10)).await;
             for srv in &services {
                 println!("service = {:?}", srv);
-                // let body = reqwest::get(srv)
-                //     .await
-                //     .text()
-                // .await;
-
-                // println!("body = {:?}", body);
+                let (status, msg) = dc2.check_service(srv).await;
+                println!("check result = {:?} {:?}", status, msg);
+                tx2.send(Event::Heartbeat(HealthInfo {
+                    target: Target::Service(String::from(srv), Option::None),
+                    status: status,
+                }))
+                .await
+                .unwrap();
             }
+            // 顺便通知Monitor检查有哪些服务超时未更新
         }
     });
 
