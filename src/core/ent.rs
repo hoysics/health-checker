@@ -25,9 +25,8 @@ pub struct Node {
 
 #[derive(Debug)]
 pub struct Service {
-    pub host: String,
-    pub api: String,
     pub name: String,
+    pub api: String,
     pub latency: u128,
     pub last_updated: u64,
 }
@@ -40,6 +39,12 @@ pub enum HealthStatus {
 }
 
 #[derive(Debug)]
+pub struct HealthInfo {
+    pub target: Target,
+    pub status: HealthStatus,
+}
+
+#[derive(Debug)]
 pub enum Target {
     Node(String, Option<Node>),
     Service(String, Option<Service>),
@@ -49,10 +54,5 @@ pub enum Target {
 pub enum Event {
     Heartbeat(HealthInfo),
     Offline(Target),
-}
-
-#[derive(Debug)]
-pub struct HealthInfo {
-    pub target: Target,
-    pub status: HealthStatus,
+    CheckAll,
 }

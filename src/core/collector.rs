@@ -23,7 +23,7 @@ use tower::{BoxError, ServiceBuilder};
 use tower_http::trace::TraceLayer;
 // use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-pub async fn watch(tx: mpsc::Sender<Event>, dc: Doctor) {
+pub async fn listen(tx: mpsc::Sender<Event>, dc: Doctor) {
     let app_state = Arc::new(AppState {
         db: RwLock::new(HashMap::new()),
         tx: tx,
