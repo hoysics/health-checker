@@ -23,6 +23,62 @@ use tower::{BoxError, ServiceBuilder};
 use tower_http::trace::TraceLayer;
 // use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+pub struct ServiceCaller {
+    db: Vec<Service>,
+    dc: Doctor,
+    tx: mpsc::Sender<Event>,
+}
+
+impl ServiceCaller {
+    pub fn new(dc: Doctor, tx: mpsc::Sender<Event>) -> ServiceCaller {
+        let mut db = Vec::new();
+        db.push(Service {
+            name: "rust website".to_string(),
+            api: "https://www.rust-lang.org".to_string(),
+            latency: 0,
+            last_updated: 0,
+        });
+        ServiceCaller { db, dc, tx }
+    }
+    pub async fn turn_on(&self) {
+        let mut should_export = 0;
+        //TODO: Graceful Shutdown
+        loop {
+            println!("linglingling");
+            time::sleep(time::Duration::from_secs(10)).await;
+            for srv in &self.db {
+                println!("service = {:?}", srv);
+                let (status, msg) = self.dc.check_service(&srv.api).await;
+                println!("check result = {:?} {:?}", status, msg);
+                self.tx
+                    .send(Event::Heartbeat(HealthInfo {
+                        target: Target::Service(
+                            String::from(&srv.name),
+                            Some(Service {
+                                name: String::from(&srv.name),
+                                api: String::from(&srv.api),
+                                latency: srv.latency,
+                                last_updated: SystemTime::now()
+                                    .duration_since(UNIX_EPOCH)
+                                    .unwrap()
+                                    .as_secs(),
+                            }),
+                        ),
+                        status: status,
+                    }))
+                    .await
+                    .unwrap();
+            }
+            // 每轮询5次 触发一次全局汇报
+            should_export += 1;
+            if should_export == 5 {
+                self.tx.send(Event::CheckAll).await.unwrap();
+                should_export = 0;
+            }
+        }
+    }
+}
+
 pub async fn listen(tx: mpsc::Sender<Event>, dc: Doctor) {
     let app_state = Arc::new(AppState {
         db: RwLock::new(HashMap::new()),
