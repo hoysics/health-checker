@@ -18,13 +18,13 @@ mod core;
 
 use crate::config::model::{load_bootstrap_config, Bootstrap};
 use crate::core::*;
-use lazy_static::lazy_static;
+// use lazy_static::lazy_static;
 use tokio::sync::mpsc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-lazy_static! {
-    pub static ref BOOTSTRAP: Bootstrap = load_bootstrap_config().unwrap();
-}
+// lazy_static! {
+//     pub static ref BOOTSTRAP: Bootstrap = load_bootstrap_config().unwrap();
+// }
 
 #[tokio::main]
 async fn main() {
@@ -37,6 +37,7 @@ async fn main() {
         .init();
 
     //TODO: 初始化配置
+    let config = load_bootstrap_config().unwrap();
     //TODO: 根据配置生成医生
     let dc = Doctor::new();
     let dc1 = dc.clone();
@@ -62,10 +63,10 @@ async fn main() {
     //3. 启动用于轮询各服务Health接口的任务
     //   同时此任务负责定时通知Monitor遍历节点以检查有哪些节点超时未更新
     tokio::spawn(async move {
-        let srv_caller = ServiceChecker::new(dc2, tx2);
+        let srv_caller = ServiceChecker::new(dc2, tx2, config.services);
         srv_caller.turn_on().await;
     });
 
     //4. 启动监听节点健康状况的服务
-    collector::listen(tx1, dc).await;
+    collector::listen(tx1, dc, config.server).await;
 }

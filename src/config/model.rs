@@ -13,14 +13,14 @@ pub struct EnvConfig {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct  Bootstrap{
+pub struct Bootstrap {
     pub server: Server,
     pub services: Vec<Service>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Server {
-    pub http_addr: String,
+    pub addr: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

@@ -1,3 +1,4 @@
+use crate::config::model;
 use crate::core::doctor::*;
 use crate::core::ent::*;
 
@@ -30,14 +31,20 @@ pub struct ServiceChecker {
 }
 
 impl ServiceChecker {
-    pub fn new(dc: Doctor, tx: mpsc::Sender<Event>) -> ServiceChecker {
+    pub fn new(
+        dc: Doctor,
+        tx: mpsc::Sender<Event>,
+        services: Vec<model::Service>,
+    ) -> ServiceChecker {
         let mut db = Vec::new();
-        db.push(Service {
-            name: "rust website".to_string(),
-            api: "https://www.rust-lang.org".to_string(),
-            latency: 0,
-            last_updated: 0,
-        });
+        for srv in services {
+            db.push(Service {
+                name: String::from(srv.name),
+                api: String::from(srv.api),
+                latency: 0,
+                last_updated: 0,
+            });
+        }
         ServiceChecker { db, dc, tx }
     }
     pub async fn turn_on(&self) {
@@ -79,7 +86,7 @@ impl ServiceChecker {
     }
 }
 
-pub async fn listen(tx: mpsc::Sender<Event>, dc: Doctor) {
+pub async fn listen(tx: mpsc::Sender<Event>, dc: Doctor, conf: model::Server) {
     let app_state = Arc::new(AppState {
         db: RwLock::new(HashMap::new()),
         tx: tx,
@@ -109,7 +116,7 @@ pub async fn listen(tx: mpsc::Sender<Event>, dc: Doctor) {
         .with_state(app_state);
 
     // Init server & wait
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    let addr: SocketAddr = conf.addr.parse().expect("Unable to parse socket address");
     tracing::debug!("listening on {}", addr);
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
