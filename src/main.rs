@@ -13,11 +13,18 @@
 //! cargo run -p example-nodes
 //! ```
 
+mod config;
 mod core;
 
+use crate::config::model::{load_bootstrap_config, Bootstrap};
 use crate::core::*;
+use lazy_static::lazy_static;
 use tokio::sync::mpsc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+lazy_static! {
+    pub static ref BOOTSTRAP: Bootstrap = load_bootstrap_config().unwrap();
+}
 
 #[tokio::main]
 async fn main() {
@@ -55,7 +62,7 @@ async fn main() {
     //3. 启动用于轮询各服务Health接口的任务
     //   同时此任务负责定时通知Monitor遍历节点以检查有哪些节点超时未更新
     tokio::spawn(async move {
-        let srv_caller = ServiceCaller::new(dc2, tx2);
+        let srv_caller = ServiceChecker::new(dc2, tx2);
         srv_caller.turn_on().await;
     });
 

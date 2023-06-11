@@ -23,14 +23,14 @@ use tower::{BoxError, ServiceBuilder};
 use tower_http::trace::TraceLayer;
 // use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-pub struct ServiceCaller {
+pub struct ServiceChecker {
     db: Vec<Service>,
     dc: Doctor,
     tx: mpsc::Sender<Event>,
 }
 
-impl ServiceCaller {
-    pub fn new(dc: Doctor, tx: mpsc::Sender<Event>) -> ServiceCaller {
+impl ServiceChecker {
+    pub fn new(dc: Doctor, tx: mpsc::Sender<Event>) -> ServiceChecker {
         let mut db = Vec::new();
         db.push(Service {
             name: "rust website".to_string(),
@@ -38,7 +38,7 @@ impl ServiceCaller {
             latency: 0,
             last_updated: 0,
         });
-        ServiceCaller { db, dc, tx }
+        ServiceChecker { db, dc, tx }
     }
     pub async fn turn_on(&self) {
         let mut should_export = 0;
