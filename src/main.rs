@@ -16,7 +16,7 @@
 mod config;
 mod core;
 
-use crate::config::model::{load_bootstrap_config, Bootstrap};
+use crate::config::model::load_bootstrap_config;
 use crate::core::*;
 // use lazy_static::lazy_static;
 use tokio::sync::mpsc;

@@ -24,6 +24,11 @@ impl Logger {
         //3. 根据不同情况 决定是否立即邮件抱紧
         match event {
             Event::Heartbeat(info) => {
+                match info.status {
+                    HealthStatus::Green => println!("need nothing"),
+                    HealthStatus::Yellow => println!("need warning"),
+                    HealthStatus::Red => println!("it's error, notify now"),
+                }
                 match info.target {
                     Target::Node(id, node) => self.update_node(id, node),
                     Target::Service(name, service) => self.update_service(name, service),

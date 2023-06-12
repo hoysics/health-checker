@@ -14,25 +14,40 @@ impl Doctor {
         }
     }
     pub fn check_node(&self, node: &Node) -> (HealthStatus, String) {
-        if node.load_1 > 80 {
-            return (HealthStatus::Red, "load too high".to_string());
+        let mut is_healthy = 0;
+        let mut msg = String::from("");
+        //条件1 硬盘占用率
+        if node.disk_status.eq_ignore_ascii_case("不正常") {
+            is_healthy += 1;
+            msg.push_str("Warn: disk use too much.\n");
         }
-        if node.load_1 > 60 {
-            return (HealthStatus::Yellow, "".to_string());
+        //条件2 内存占用率
+        if node.mem_status.eq_ignore_ascii_case("不正常") {
+            is_healthy += 1;
+            msg.push_str("Warn: mem too high.\n");
         }
+        //条件3 节点上次更新时间
         let cur_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
         if cur_time - node.last_updated > 600 {
+            // 大于10分钟时视为已经下线
             // 暂时不做：先检查一下服务器上端口的健康状态
             // 如果正常 则仅记录本次为节点监控失效
             // 如果不正常 则发出警告: 节点和服务均下线
-            return (HealthStatus::Red, "".to_string());
+            is_healthy += 2;
+            msg.push_str("Error: node hasn't update too long.")
         } else if cur_time - node.last_updated > 300 {
-            return (HealthStatus::Yellow, "".to_string());
+            // 大于5分钟未更新需要警告
+            is_healthy += 1;
+            msg.push_str("Warn: node hasn't update for a while.")
         }
-        (HealthStatus::Green, "".to_string())
+        match is_healthy {
+            0 => (HealthStatus::Green, "it looks good".to_string()),
+            1 => (HealthStatus::Yellow, msg),
+            _ => (HealthStatus::Red, msg),
+        }
     }
     pub async fn check_service(&self, url: &String) -> (HealthStatus, String) {
         let resp = self.client.get(url).send().await;
