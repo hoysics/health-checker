@@ -51,7 +51,18 @@ impl Logger {
             None => println!("update service fail, no node info"),
         };
     }
-    fn offline(&self, target: Target) {}
+    fn offline(&mut self, target: Target) {
+        match target {
+            Target::Node(id, _) => {
+                let node = self.nodes.remove(&id).unwrap();
+                println!("node offline {:?}", node);
+            }
+            Target::Service(name, _) => {
+                let service = self.services.remove(&name).unwrap();
+                println!("service offline {:?}", service);
+            }
+        };
+    }
     fn tranverse_check(&self) {
         let mut result: Vec<HealthInfo> = Vec::new();
         //TODO: 检查节点 遍历Map 检查每个节点的健康状态

@@ -11,7 +11,7 @@ use axum::{
     routing::{delete, get},
     Json, Router,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize};
 use std::{
     collections::HashMap,
     net::SocketAddr,
