@@ -1,6 +1,5 @@
 use schemars::schema::RootSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use tracing::info;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Profiles {
@@ -50,7 +49,7 @@ where
         }
         Err(err) => {
             // 记录日志
-            info!("{}", err);
+            tracing::info!("{}", err);
             // 返回None
             None
         }

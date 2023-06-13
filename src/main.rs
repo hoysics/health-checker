@@ -20,7 +20,7 @@ use crate::config::model::load_bootstrap_config;
 use crate::core::*;
 // use lazy_static::lazy_static;
 use tokio::sync::mpsc;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+// use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 // lazy_static! {
 //     pub static ref BOOTSTRAP: Bootstrap = load_bootstrap_config().unwrap();
@@ -28,12 +28,15 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "example_nodes=debug,tower_http=debug".into()),
-        )
-        .with(tracing_subscriber::fmt::layer())
+    // tracing_subscriber::registry()
+    //     .with(
+    //         tracing_subscriber::EnvFilter::try_from_default_env()
+    //             .unwrap_or_else(|_| "example_nodes=debug,tower_http=debug".into()),
+    //     )
+    //     .with(tracing_subscriber::fmt::layer())
+    //     .init();
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
         .init();
 
     //TODO: 初始化配置
@@ -51,14 +54,14 @@ async fn main() {
     tokio::spawn(async move {
         // Init Monitor
         let mut logger = Logger::new(dc1);
-        println!("into watch");
+        tracing::info!("begin nodes watch");
         loop {
             tokio::select! {
                 Some(event)=rx1.recv()=> logger.log(event),
                 else => { break }
             };
         }
-        println!("break watch");
+        tracing::info!("break nodes watch");
     });
     //3. 启动用于轮询各服务Health接口的任务
     //   同时此任务负责定时通知Monitor遍历节点以检查有哪些节点超时未更新

@@ -11,7 +11,7 @@ use axum::{
     routing::{delete, get},
     Json, Router,
 };
-use serde::{Deserialize};
+use serde::Deserialize;
 use std::{
     collections::HashMap,
     net::SocketAddr,
@@ -51,12 +51,12 @@ impl ServiceChecker {
         let mut should_export = 0;
         //TODO: Graceful Shutdown
         loop {
-            println!("linglingling");
             time::sleep(time::Duration::from_secs(10)).await;
+            tracing::info!("begin service tranverse check");
             for srv in &self.db {
-                println!("service = {:?}", srv);
+                tracing::info!("service = {:?}", srv);
                 let (status, msg) = self.dc.check_service(&srv.api).await;
-                println!("check result = {:?} {:?}", status, msg);
+                tracing::info!("check result = {:?} {:?}", status, msg);
                 self.tx
                     .send(Event::Heartbeat(HealthInfo {
                         target: Target::Service(
@@ -76,10 +76,12 @@ impl ServiceChecker {
                     .await
                     .unwrap();
             }
+            tracing::info!("end service tranverse check");
             // 每轮询5次 触发一次全局汇报
             should_export += 1;
             if should_export == 5 {
                 self.tx.send(Event::CheckAll).await.unwrap();
+                tracing::info!("call node tranverse check");
                 should_export = 0;
             }
         }

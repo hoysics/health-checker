@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use crate::core::doctor::*;
 use crate::core::ent::*;
+use tracing::instrument;
 // 记录数据同时判断是否需要报警
+#[derive(Debug)]
 pub struct Logger {
     nodes: HashMap<String, Node>,       //存储原始的节点信息
     services: HashMap<String, Service>, //存储原始的服务信息
@@ -17,19 +19,20 @@ impl Logger {
             dc,
         }
     }
+    #[instrument]
     pub fn log(&mut self, event: Event) {
         //TODO: 带颜色的打印控制台日志
         //1. 打印日志 记录节点状态
         //2. 将节点状况计入Map中
         //3. 根据不同情况 决定是否立即邮件抱紧
         match event {
-            Event::Heartbeat(info) => {
-                match info.status {
-                    HealthStatus::Green => println!("need nothing"),
-                    HealthStatus::Yellow => println!("need warning"),
-                    HealthStatus::Red => println!("it's error, notify now"),
+            Event::Heartbeat(health) => {
+                match health.status {
+                    HealthStatus::Green => tracing::info!("recv heartbeat: need nothing"),
+                    HealthStatus::Yellow => tracing::info!("recv heartbeat: need warning"),
+                    HealthStatus::Red => tracing::info!("recv heartbeat: it's error, notify now"),
                 }
-                match info.target {
+                match health.target {
                     Target::Node(id, node) => self.update_node(id, node),
                     Target::Service(name, service) => self.update_service(name, service),
                 };
@@ -39,32 +42,32 @@ impl Logger {
         };
     }
     fn update_node(&mut self, id: String, node: Option<Node>) {
-        println!("try to update node {:?},{:?}", id, node);
+        tracing::info!("try to update node {:?},{:?}", id, node);
         match node {
             Some(node) => {
                 self.nodes.insert(id, node);
             }
-            None => println!("update node fail, no node info"),
+            None => tracing::info!("update node fail, no node info"),
         };
     }
     fn update_service(&mut self, name: String, service: Option<Service>) {
-        println!("try to update service {:?},{:?}", name, service);
+        tracing::info!("try to update service {:?},{:?}", name, service);
         match service {
             Some(service) => {
                 self.services.insert(name, service);
             }
-            None => println!("update service fail, no node info"),
+            None => tracing::info!("update service fail, no node info"),
         };
     }
     fn offline(&mut self, target: Target) {
         match target {
             Target::Node(id, _) => {
                 let node = self.nodes.remove(&id).unwrap();
-                println!("node offline {:?}", node);
+                tracing::info!("node offline {:?}", node);
             }
             Target::Service(name, _) => {
                 let service = self.services.remove(&name).unwrap();
-                println!("service offline {:?}", service);
+                tracing::info!("service offline {:?}", service);
             }
         };
     }
@@ -82,7 +85,7 @@ impl Logger {
         }
         //TODO: 检查服务
         //1. 将状态先输出至单独的本地文件 用以留档
-        println!("finished check nodes\n{:?}", result);
+        tracing::info!("finished check all nodes\n{:?}", result);
         //2. 发邮件通知当前的文件健康状态
     }
 }
