@@ -1,6 +1,6 @@
 use crate::core::ent::*;
 use reqwest::{Client, StatusCode};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 //TODO: 由配置文件加载的节点健康状态判断
 #[derive(Debug, Clone)]
 pub struct Doctor {
@@ -10,7 +10,7 @@ pub struct Doctor {
 impl Doctor {
     pub fn new() -> Doctor {
         Doctor {
-            client: Client::new(),
+            client: Client::builder().timeout(Duration::from_secs(2)).build().unwrap(),
         }
     }
     pub fn check_node(&self, node: &Node) -> (HealthStatus, String) {
