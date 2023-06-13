@@ -1,0 +1,4 @@
+server:
+  addr: 0.0.0.0:3000
+services:
+  - {name: rust-dev, api: https://www.rust-lang.org}
