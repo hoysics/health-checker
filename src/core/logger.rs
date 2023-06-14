@@ -1,25 +1,25 @@
-use std::collections::HashMap;
-
+use crate::core::alarm::*;
 use crate::core::doctor::*;
 use crate::core::ent::*;
-use tracing::instrument;
+use std::collections::HashMap;
 // 记录数据同时判断是否需要报警
 #[derive(Debug)]
 pub struct Logger {
     nodes: HashMap<String, Node>,       //存储原始的节点信息
     services: HashMap<String, Service>, //存储原始的服务信息
     dc: Doctor,
+    alarm: Alarm,
 }
 
 impl Logger {
-    pub fn new(dc: Doctor) -> Logger {
+    pub fn new(dc: Doctor, alarm: Alarm) -> Logger {
         Logger {
             nodes: HashMap::new(),
             services: HashMap::new(),
             dc,
+            alarm,
         }
     }
-    #[instrument]
     pub fn log(&mut self, event: Event) {
         //TODO: 带颜色的打印控制台日志
         //1. 打印日志 记录节点状态
@@ -30,7 +30,10 @@ impl Logger {
                 match health.status {
                     HealthStatus::Green => tracing::info!("recv heartbeat: need nothing"),
                     HealthStatus::Yellow => tracing::info!("recv heartbeat: need warning"),
-                    HealthStatus::Red => tracing::info!("recv heartbeat: it's error, notify now"),
+                    HealthStatus::Red => {
+                        tracing::info!("recv heartbeat: it's error, notify now");
+                        self.alarm.notify(vec![health.clone()]);
+                    }
                 }
                 match health.target {
                     Target::Node(id, node) => self.update_node(id, node),
@@ -87,5 +90,6 @@ impl Logger {
         //1. 将状态先输出至单独的本地文件 用以留档
         tracing::info!("finished check all nodes\n{:?}", result);
         //2. 发邮件通知当前的文件健康状态
+        self.alarm.notify(result);
     }
 }

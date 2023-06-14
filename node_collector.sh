@@ -76,7 +76,7 @@ fi
 
 is_init=false
 if [[ ! -s $path ]] || [[ $(grep 统计时间 $path | wc -l) -eq 0 ]]; then
-	echo -e "统计时间 主机名 服务器IP 系统进程数 CPU空闲id 僵尸进程数 总内存大小 已用内存 内存使用率 内存巡检状态 分区 数据盘总空间 数据盘剩余空间 数据盘磁盘使用率 磁盘超60使用分区 磁盘超60使用率 磁盘状况" >>$path
+	echo -e "主机名 统计时间 服务器IP 系统进程数 僵尸进程数 CPU空闲id 总内存大小 已用内存 内存使用率 内存巡检状态 分区 数据盘总空间 数据盘剩余空间 数据盘磁盘使用率 磁盘超60使用分区 磁盘超60使用率 磁盘状况" >>$path
 	is_init=true
 fi
 # echo -e "input: $time_day $system_hostname $system_ip $load_1 $load_15 $load_5 $mem_status_total $mem_status_use $mem_status_per $mem_status $disk_f $disk_total $disk_free $disk_per $disk_f_60 $disk_per_60 $disk_status" >>$path

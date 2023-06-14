@@ -17,7 +17,6 @@ mod config;
 mod core;
 
 use crate::config::model::load_bootstrap_config;
-use crate::core::api::*;
 use crate::core::*;
 // use lazy_static::lazy_static;
 use tokio::sync::{broadcast, mpsc};
@@ -54,7 +53,7 @@ async fn main() {
     //     .with(tracing_subscriber::fmt::layer())
     //     .init();
     tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
+        .with_max_level(tracing::Level::INFO)
         .init();
 
     //1. 初始化配置
@@ -75,7 +74,7 @@ async fn main() {
     //3. 启动用于监听节点状态和服务状态的任务
     tokio::spawn(async move {
         // Init Monitor
-        let mut logger = Logger::new(dc1);
+        let mut logger = Logger::new(dc1, alarm::Alarm::new());
         tracing::info!("begin nodes watch");
         loop {
             tokio::select! {
@@ -93,7 +92,7 @@ async fn main() {
         let srv_caller = ServiceChecker::new(dc2, in_1, config.services);
         tracing::info!("begin service watch");
         loop {
-            time::sleep(time::Duration::from_secs(10)).await;
+            time::sleep(time::Duration::from_secs(300)).await;
             if shutdown_rx2.try_recv().is_ok() {
                 break;
             }
