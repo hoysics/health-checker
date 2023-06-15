@@ -74,7 +74,16 @@ async fn main() {
     //3. 启动用于监听节点状态和服务状态的任务
     tokio::spawn(async move {
         // Init Monitor
-        let mut logger = Logger::new(dc1, alarm::Alarm::new());
+        let mut logger = Logger::new(
+            dc1,
+            alarm::Alarm::new(
+                config.smtp.from,
+                config.smtp.to,
+                config.smtp.username,
+                config.smtp.password,
+                config.smtp.domain,
+            ),
+        );
         tracing::info!("begin nodes watch");
         loop {
             tokio::select! {

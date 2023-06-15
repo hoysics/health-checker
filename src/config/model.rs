@@ -15,6 +15,7 @@ pub struct EnvConfig {
 pub struct Bootstrap {
     pub server: Server,
     pub services: Vec<Service>,
+    pub smtp: Smtp,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -26,6 +27,14 @@ pub struct Server {
 pub struct Service {
     pub name: String,
     pub api: String,
+}
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Smtp {
+    pub from: String,
+    pub to: String,
+    pub username: String,
+    pub password: String,
+    pub domain: String,
 }
 
 // 加载指定配置文件

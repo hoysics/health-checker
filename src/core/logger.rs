@@ -3,7 +3,6 @@ use crate::core::doctor::*;
 use crate::core::ent::*;
 use std::collections::HashMap;
 // 记录数据同时判断是否需要报警
-#[derive(Debug)]
 pub struct Logger {
     nodes: HashMap<String, Node>,       //存储原始的节点信息
     services: HashMap<String, Service>, //存储原始的服务信息
