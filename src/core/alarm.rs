@@ -40,7 +40,7 @@ impl Alarm {
             update_time: Utc::now().to_rfc3339(),
             events,
         };
-        let msg = serde_json::to_string(&body).unwrap();
+        let msg = serde_json::to_string_pretty(&body).unwrap();
         let email = Message::builder()
             .from(self.from.parse().unwrap())
             .to(self.to.parse().unwrap())
