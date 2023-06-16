@@ -23,7 +23,7 @@ pub struct Node {
     pub status_msg: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Service {
     pub name: String,
     pub api: String,
@@ -31,20 +31,20 @@ pub struct Service {
     pub last_updated: u64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize)]
 pub enum HealthStatus {
     Red,
     Yellow,
     Green,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize)]
 pub struct HealthInfo {
     pub target: Target,
     pub status: HealthStatus,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize)]
 pub enum Target {
     Node(String, Option<Node>),
     Service(String, Option<Service>),

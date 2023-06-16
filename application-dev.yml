@@ -2,3 +2,9 @@ server:
   addr: 0.0.0.0:3000
 services:
   - {name: rust-dev, api: https://www.rust-lang.org}
+smtp:
+  from: NoBody <nobody@domain.tld>
+  to: Yuin <yuin@domain.tld>
+  username: smtp_username
+  password: smtp_password
+  domain: smtp.office365.com
